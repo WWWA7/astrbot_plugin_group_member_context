@@ -115,6 +115,14 @@ class GroupMemberContextPlugin(Star):
     ) -> Any:
         return await event.bot.api.call_action(action, **params)
 
+    @staticmethod
+    def _unwrap_action_data(result: Any) -> Any:
+        if not isinstance(result, dict):
+            return result
+        if "data" in result:
+            return result.get("data")
+        return result
+
     def _extract_sender_info_from_event(
         self, event: AiocqhttpMessageEvent
     ) -> dict[str, Any]:
@@ -187,12 +195,14 @@ class GroupMemberContextPlugin(Star):
             event.set_extra(self.SENDER_INFO_CACHE_KEY, member_info)
             return member_info
 
-        member_info = await self._call_action(
-            event,
-            "get_group_member_info",
-            group_id=int(group_id),
-            user_id=int(sender_id),
-            no_cache=self.no_cache,
+        member_info = self._unwrap_action_data(
+            await self._call_action(
+                event,
+                "get_group_member_info",
+                group_id=int(group_id),
+                user_id=int(sender_id),
+                no_cache=self.no_cache,
+            )
         )
 
         if not isinstance(member_info, dict):
@@ -219,11 +229,13 @@ class GroupMemberContextPlugin(Star):
             event.set_extra(self.GROUP_SNAPSHOT_CACHE_KEY, snapshot)
             return snapshot
 
-        members = await self._call_action(
-            event,
-            "get_group_member_list",
-            group_id=int(group_id),
-            no_cache=self.no_cache,
+        members = self._unwrap_action_data(
+            await self._call_action(
+                event,
+                "get_group_member_list",
+                group_id=int(group_id),
+                no_cache=self.no_cache,
+            )
         )
 
         if not isinstance(members, list):
@@ -351,7 +363,9 @@ class GroupMemberContextPlugin(Star):
                     "2. 群昵称/群名片以 card 字段为准，若为空再用 nickname；\n"
                     "3. 专属头衔以 title 字段为准，若为空则表示没有头衔；\n"
                     "4. 需要提及 QQ 号时，直接使用 user_id；\n"
-                    "5. 若用户问“你是不是管理员/群主”，这里的“你”默认指 Bot，自身身份以“Bot 自身身份”字段为准。"
+                    "5. 若用户问“你是不是管理员/群主”“你几级了”“你的头衔/群名片/昵称是什么”等涉及 Bot 自身在当前群的信息，而上下文里未直接提供 Bot 字段，必须直接调用 `get_group_identity_snapshot` 后再继续回答；\n"
+                    "6. 若需要查询其他成员是谁、谁是群主、谁是管理员、某个 QQ 对应谁、某人的头衔或群名片，优先调用 `query_group_member_identity` 或 `get_group_identity_snapshot`；\n"
+                    "7. 需要调用工具时，直接调用工具并在拿到结果后一次性回答，不要先向用户发送“我先查一下”“我去看看”等过渡句。"
                 ),
                 "[/群成员身份上下文]\n",
             ]
@@ -477,11 +491,13 @@ class GroupMemberContextPlugin(Star):
         try:
             group_id = int(event.get_group_id())
             sender_id = str(event.get_sender_id())
-            members = await self._call_action(
-                event,
-                "get_group_member_list",
-                group_id=group_id,
-                no_cache=self.no_cache,
+            members = self._unwrap_action_data(
+                await self._call_action(
+                    event,
+                    "get_group_member_list",
+                    group_id=group_id,
+                    no_cache=self.no_cache,
+                )
             )
 
             if not isinstance(members, list):
