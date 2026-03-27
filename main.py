@@ -18,6 +18,7 @@ class GroupMemberContextPlugin(Star):
     def __init__(self, context: Context, config: Optional[AstrBotConfig] = None):
         super().__init__(context)
         self.config = config if config is not None else {}
+        self.enable_auto_inject = bool(self.config.get("enable_auto_inject", True))
         self.inject_group_admin_list = bool(
             self.config.get("inject_group_admin_list", True)
         )
@@ -114,12 +115,67 @@ class GroupMemberContextPlugin(Star):
     ) -> Any:
         return await event.bot.api.call_action(action, **params)
 
+    def _extract_sender_info_from_event(
+        self, event: AiocqhttpMessageEvent
+    ) -> dict[str, Any]:
+        sender: Any = None
+
+        for attr_name in ("message_obj", "message_event", "_event", "event"):
+            obj = getattr(event, attr_name, None)
+            if obj is not None and hasattr(obj, "sender"):
+                sender = getattr(obj, "sender", None)
+                if sender is not None:
+                    break
+            if isinstance(obj, dict):
+                sender = obj.get("sender")
+                if sender is not None:
+                    break
+
+        if sender is None:
+            raw_message = getattr(event, "raw_message_obj", None)
+            if isinstance(raw_message, dict):
+                sender = raw_message.get("sender")
+
+        if sender is None:
+            return {}
+
+        if not isinstance(sender, dict):
+            try:
+                sender = dict(sender)
+            except Exception:
+                sender = {
+                    "user_id": getattr(sender, "user_id", None),
+                    "nickname": getattr(sender, "nickname", None),
+                    "card": getattr(sender, "card", None),
+                    "role": getattr(sender, "role", None),
+                    "level": getattr(sender, "level", None),
+                    "title": getattr(sender, "title", None),
+                }
+
+        user_id = self._safe_str(sender.get("user_id"), self._safe_str(event.get_sender_id()))
+        nickname = self._safe_str(sender.get("nickname"), "未知")
+        card = self._safe_str(sender.get("card"))
+        return {
+            "user_id": user_id,
+            "nickname": nickname,
+            "card": card,
+            "card_or_nickname": card or nickname,
+            "role": self._safe_str(sender.get("role"), "member"),
+            "title": self._safe_str(sender.get("title")),
+            "level": self._safe_str(sender.get("level")),
+        }
+
     async def _get_sender_member_info(
         self, event: AiocqhttpMessageEvent
     ) -> dict[str, Any]:
         cached = event.get_extra(self.SENDER_INFO_CACHE_KEY)
         if isinstance(cached, dict):
             return cached
+
+        event_sender_info = self._extract_sender_info_from_event(event)
+        if event_sender_info:
+            event.set_extra(self.SENDER_INFO_CACHE_KEY, event_sender_info)
+            return event_sender_info
 
         group_id = str(event.get_group_id())
         sender_id = str(event.get_sender_id())
@@ -310,6 +366,9 @@ class GroupMemberContextPlugin(Star):
     async def inject_group_member_context(
         self, event: AstrMessageEvent, req: ProviderRequest
     ):
+        if not self.enable_auto_inject:
+            return
+
         if not self._is_group_event(event):
             return
 
@@ -318,31 +377,80 @@ class GroupMemberContextPlugin(Star):
 
         try:
             sender_info = await self._get_sender_member_info(event)
-
-            message_text = self._safe_str(getattr(event, "message_str", ""))
-            need_group_snapshot = (
-                not self.smart_query_group_snapshot
-                or self._is_group_role_related_text(message_text)
-            )
-
-            snapshot = None
-            if need_group_snapshot:
-                snapshot = await self._get_group_snapshot(
-                    event, include_admin_list=self.inject_group_admin_list
-                )
-
-            injected_prompt = self._build_injected_prompt(sender_info, snapshot)
+            injected_prompt = self._build_injected_prompt(sender_info, None)
             req.system_prompt = (req.system_prompt or "") + "\n" + injected_prompt
 
             logger.info(
-                "已注入群成员身份上下文: "
+                "已注入发送者身份上下文: "
                 f"group_id={event.get_group_id()} "
                 f"sender_id={event.get_sender_id()} "
                 f"sender_role={sender_info.get('role', 'unknown')} "
-                f"queried_group_snapshot={need_group_snapshot}"
+                f"source=event_sender_or_member_info"
             )
         except Exception as exc:
             logger.warning(f"注入群成员身份上下文失败: {exc}")
+
+    @filter.llm_tool(name="get_group_identity_snapshot")
+    async def get_group_identity_snapshot(self, event: AstrMessageEvent) -> str:
+        """
+        获取当前群的身份快照。
+        适用于模型需要查询“其他成员”或整群身份信息时主动调用：
+        - 当前群谁是群主
+        - 当前群有哪些管理员
+        - Bot 自己是不是管理员/群主
+        - 需要查看完整群身份快照
+
+        Returns:
+            string: JSON 字符串，包含 sender、owner、admins、bot_member 等字段
+        """
+        if not self._is_group_event(event):
+            return json.dumps(
+                {"status": "error", "message": "当前不是群聊，无法查询群身份快照。"},
+                ensure_ascii=False,
+            )
+
+        if not isinstance(event, AiocqhttpMessageEvent):
+            return json.dumps(
+                {"status": "error", "message": "当前平台暂不支持该查询。"},
+                ensure_ascii=False,
+            )
+
+        try:
+            sender_info = await self._get_sender_member_info(event)
+            snapshot = await self._get_group_snapshot(
+                event, include_admin_list=self.inject_group_admin_list
+            )
+            return json.dumps(
+                {
+                    "status": "success",
+                    "group_id": str(event.get_group_id()),
+                    "sender": {
+                        "user_id": self._safe_str(sender_info.get("user_id")),
+                        "nickname": self._safe_str(sender_info.get("nickname")),
+                        "card": self._safe_str(sender_info.get("card")),
+                        "card_or_nickname": self._safe_str(
+                            sender_info.get("card_or_nickname")
+                        ),
+                        "role": self._safe_str(sender_info.get("role"), "member"),
+                        "role_name": self._role_to_cn(
+                            self._safe_str(sender_info.get("role"), "member")
+                        ),
+                        "title": self._safe_str(sender_info.get("title")),
+                        "level": self._safe_str(sender_info.get("level")),
+                    },
+                    "owner": snapshot.get("owner"),
+                    "admins": snapshot.get("admins", []),
+                    "bot_member": snapshot.get("bot_member"),
+                },
+                ensure_ascii=False,
+                indent=2,
+            )
+        except Exception as exc:
+            logger.error(f"获取群身份快照失败: {exc}")
+            return json.dumps(
+                {"status": "error", "message": f"获取群身份快照失败: {exc}"},
+                ensure_ascii=False,
+            )
 
     @filter.llm_tool(name="query_group_member_identity")
     async def query_group_member_identity(
