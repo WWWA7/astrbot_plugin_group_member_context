@@ -1,4 +1,10 @@
 {
+    "enable_auto_inject": {
+        "description": "自动注入群成员身份上下文",
+        "hint": "关闭后，插件不再每轮自动注入身份信息，仅注册 LLM 工具供模型按需调用",
+        "type": "bool",
+        "default": true
+    },
     "inject_group_admin_list": {
         "description": "注入管理员列表",
         "hint": "开启后会把本群管理员列表一并注入给模型，便于回答“谁是管理员”之类的问题",
