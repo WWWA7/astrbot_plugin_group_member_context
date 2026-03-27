@@ -1,0 +1,40 @@
+{
+    "inject_group_admin_list": {
+        "description": "注入管理员列表",
+        "hint": "开启后会把本群管理员列表一并注入给模型，便于回答“谁是管理员”之类的问题",
+        "type": "bool",
+        "default": true
+    },
+    "smart_query_group_snapshot": {
+        "description": "按需查询群主/管理员信息",
+        "hint": "开启后，仅当消息涉及群主、管理员、权限身份时，才查询整群成员列表；可显著减少资源消耗",
+        "type": "bool",
+        "default": true
+    },
+    "sender_info_ttl_seconds": {
+        "description": "发言者信息缓存秒数",
+        "hint": "当前发言者的群成员信息缓存时长，默认 120 秒",
+        "type": "int",
+        "default": 120
+    },
+    "group_snapshot_ttl_seconds": {
+        "description": "群身份快照缓存秒数",
+        "hint": "群主、管理员、Bot 身份快照的缓存时长，默认 300 秒",
+        "type": "int",
+        "default": 300
+    },
+    "no_cache": {
+        "description": "接口查询不使用缓存",
+        "hint": "开启后会要求 OneBot 接口自身也尽量不使用缓存；通常建议保持关闭，由本插件内存缓存接管",
+        "type": "bool",
+        "default": false
+    },
+    "extra_instruction": {
+        "description": "额外提示词",
+        "hint": "会追加到插件注入的系统提示词后面，可用于约束 bot 如何使用这些群成员身份信息",
+        "type": "text",
+        "editor_mode": true,
+        "editor_language": "markdown",
+        "default": ""
+    }
+}

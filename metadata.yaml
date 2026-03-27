@@ -1,0 +1,6 @@
+name: astrbot_plugin_group_member_context
+display_name: "群成员身份上下文"
+desc: "为 AstrBot 注入群成员身份信息，让模型知道群主、管理员、群昵称、头衔、QQ 与昵称"
+version: v1.0.0
+author: WWWA7
+repo: https://github.com/WWWA7/astrbot_plugin_group_member_context
