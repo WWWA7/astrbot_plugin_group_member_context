@@ -5,12 +5,18 @@ from typing import Any, Optional
 from astrbot.api import AstrBotConfig, logger
 from astrbot.api.event import AstrMessageEvent, filter
 from astrbot.api.provider import ProviderRequest
-from astrbot.api.star import Context, Star
+from astrbot.api.star import Context, Star, register
 from astrbot.core.platform.sources.aiocqhttp.aiocqhttp_message_event import (
     AiocqhttpMessageEvent,
 )
 
 
+@register(
+    "group_member_context",
+    "WWWA7",
+    "为 AstrBot 注入群成员身份信息，让模型知道群主、管理员、群昵称、头衔、QQ 与昵称",
+    "1.0.1",
+)
 class GroupMemberContextPlugin(Star):
     SENDER_INFO_CACHE_KEY = "_group_member_context_sender_info"
     GROUP_SNAPSHOT_CACHE_KEY = "_group_member_context_group_snapshot"
@@ -392,14 +398,17 @@ class GroupMemberContextPlugin(Star):
         try:
             sender_info = await self._get_sender_member_info(event)
             injected_prompt = self._build_injected_prompt(sender_info, None)
+
             req.system_prompt = (req.system_prompt or "") + "\n" + injected_prompt
+            req.prompt = f"{injected_prompt}\n{req.prompt}" if req.prompt else injected_prompt
 
             logger.info(
                 "已注入发送者身份上下文: "
                 f"group_id={event.get_group_id()} "
                 f"sender_id={event.get_sender_id()} "
                 f"sender_role={sender_info.get('role', 'unknown')} "
-                f"source=event_sender_or_member_info"
+                "inject_target=system_prompt+prompt "
+                "source=event_sender_or_member_info"
             )
         except Exception as exc:
             logger.warning(f"注入群成员身份上下文失败: {exc}")
